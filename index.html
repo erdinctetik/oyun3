@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Diş Kahramanı: Şeker Saldırısı</title>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0; overflow: hidden;
+            font-family: 'Fredoka One', cursive;
+            user-select: none; touch-action: none;
+            transition: background 2s linear;
+        }
+        canvas { display: block; }
+        
+        .ui-layer {
+            position: absolute; top: 15px; left: 15px;
+            pointer-events: none; z-index: 10;
+        }
+        .score-box {
+            font-size: 24px; color: #FFFFFF;
+            background: rgba(0,0,0,0.6);
+            padding: 10px 20px; border-radius: 15px;
+            border: 3px solid #4FC3F7;
+            text-shadow: 2px 2px 0 #000;
+        }
+        .health-bar-container {
+            margin-top: 10px; width: 200px; height: 20px;
+            background: rgba(0,0,0,0.5); border-radius: 10px;
+            border: 2px solid white; overflow: hidden;
+        }
+        .health-bar-fill {
+            height: 100%; width: 100%;
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            transition: width 0.3s;
+        }
+
+        .message-layer {
+            position: absolute; top: 40%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 50px; color: white;
+            text-shadow: 4px 4px 0px #C62828, -2px -2px 0 #333;
+            pointer-events: none; opacity: 0;
+            transition: opacity 0.3s; z-index: 20;
+            text-align: center; width: 100%;
+        }
+
+        /* AYAR PANELİ */
+        .settings-panel {
+            position: absolute; bottom: 0; left: 0;
+            width: 100%; height: 140px;
+            background: rgba(255, 255, 255, 0.95);
+            border-top: 5px solid #03A9F4;
+            border-radius: 20px 20px 0 0;
+            display: flex; justify-content: space-around; align-items: center;
+            padding: 0 10px; box-sizing: border-box; z-index: 30;
+        }
+        .control-group { display: flex; flex-direction: column; align-items: center; width: 22%; }
+        .control-label { font-size: 11px; color: #333; margin-bottom: 5px; text-align: center; }
+        input[type=range] { -webkit-appearance: none; width: 100%; height: 8px; background: #ddd; border-radius: 10px; outline: none; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 24px; height: 24px; border-radius: 50%; background: #03A9F4; border: 2px solid white; }
+
+        .top-controls { position: absolute; top: 15px; right: 15px; display: flex; gap: 10px; z-index: 50; }
+        .btn-action { background: #FF5722; color: white; border-radius: 10px; padding: 8px 12px; font-size: 14px; cursor: pointer; box-shadow: 0 3px 0 #BF360C; }
+        .btn-action:active { transform: translateY(3px); box-shadow: none; }
+    </style>
+</head>
+<body>
+
+    <div class="ui-layer">
+        <div class="score-box">PUAN: <span id="score">0</span> 🛡️</div>
+        <div class="health-bar-container">
+            <div id="healthBar" class="health-bar-fill"></div>
+        </div>
+    </div>
+
+    <div class="top-controls">
+        <button class="btn-action" onclick="resetGame()">♻️ SIFIRLA</button>
+    </div>
+
+    <div id="message" class="message-layer">DİŞ ÇÜRÜDÜ!</div>
+    <canvas id="gameCanvas"></canvas>
+
+    <div class="settings-panel">
+        <div class="control-group">
+            <div class="control-label">Fırça Konumu 🪥</div>
+            <input type="range" id="posRange" min="0" max="100" value="20">
+        </div>
+        <div class="control-group">
+            <div class="control-label">Köpük Boyutu 🫧</div>
+            <input type="range" id="sizeRange" min="15" max="40" value="25">
+        </div>
+        <div class="control-group">
+            <div class="control-label">Ağırlık ⚖️</div>
+            <input type="range" id="weightRange" min="3" max="10" value="5">
+        </div>
+        <div class="control-group">
+            <div class="control-label">Fırlatma Gücü 🚀</div>
+            <input type="range" id="speedRange" min="15" max="45" value="30">
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const healthBarEl = document.getElementById('healthBar');
+        const msgEl = document.getElementById('message');
+
+        const posInput = document.getElementById('posRange');
+        const sizeInput = document.getElementById('sizeRange');
+        const weightInput = document.getElementById('weightRange');
+        const speedInput = document.getElementById('speedRange');
+
+        let cw, ch, score = 0;
+        let time = 0; 
+        let dayDuration = 3000;
+
+        // FİZİK
+        let ballRadius = 25;
+        let gravityVal = 0.5;
+        let powerMulti = 0.3;
+        let catapultBaseX = 180;
+        let friction = 0.8;
+        let slingY;
+
+        let slingBall = { x: 0, y: 0, isDragging: false };
+        let flyingBalls = [];
+        let particles = [];
+        let enemies = []; // Mikroplar ve Yiyecekler
+
+        // DEV DİŞ
+        let giantTooth = {
+            x: 0, y: 0, w: 120, h: 0,
+            health: 100, maxHealth: 100,
+            isRotten: false
+        };
+
+        function resize() {
+            cw = window.innerWidth;
+            ch = window.innerHeight;
+            canvas.width = cw;
+            canvas.height = ch - 140; 
+            slingY = canvas.height - 100;
+            updateCatapultPos();
+            giantTooth.h = canvas.height * 0.6; 
+            giantTooth.y = canvas.height / 2;
+        }
+        window.addEventListener('resize', resize);
+        
+        function updateCatapultPos() {
+            const pct = parseInt(posInput.value);
+            const minX = 140; const maxX = cw / 2;
+            catapultBaseX = minX + (pct / 100) * (maxX - minX);
+            if (!slingBall.isDragging) { slingBall.x = catapultBaseX; slingBall.y = slingY; }
+        }
+
+        function getPos(e) { return e.touches ? {x:e.touches[0].clientX, y:e.touches[0].clientY} : {x:e.clientX, y:e.clientY}; }
+        function onDown(e) {
+            const p = getPos(e);
+            if(p.y > canvas.height) return;
+            if(Math.hypot(p.x - slingBall.x, p.y - slingBall.y) < 80) slingBall.isDragging = true;
+        }
+        function onMove(e) {
+            if(!slingBall.isDragging) return;
+            const p = getPos(e);
+            let dx = p.x - catapultBaseX, dy = p.y - slingY;
+            let d = Math.hypot(dx, dy);
+            if(d > 150) { let a = Math.atan2(dy, dx); dx = Math.cos(a)*150; dy = Math.sin(a)*150; }
+            slingBall.x = catapultBaseX + dx; slingBall.y = slingY + dy;
+        }
+        function onUp() {
+            if(!slingBall.isDragging) return;
+            slingBall.isDragging = false;
+            let ammo = Math.random()>0.5 ? '🫧' : '🦷';
+            flyingBalls.push({
+                x: slingBall.x, y: slingBall.y,
+                vx: (catapultBaseX - slingBall.x) * powerMulti,
+                vy: (slingY - slingBall.y) * powerMulti,
+                emoji: ammo, r: ballRadius
+            });
+            slingBall.x = catapultBaseX; slingBall.y = slingY;
+        }
+        
+        window.addEventListener('mousedown', onDown); window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
+        window.addEventListener('touchstart', onDown, {passive:false}); window.addEventListener('touchmove', e=>{if(slingBall.isDragging)e.preventDefault();onMove(e)},{passive:false}); window.addEventListener('touchend', onUp);
+
+        posInput.addEventListener('input', updateCatapultPos);
+        sizeInput.addEventListener('input', e => ballRadius = parseInt(e.target.value));
+        weightInput.addEventListener('input', e => gravityVal = parseInt(e.target.value)/10);
+        speedInput.addEventListener('input', e => powerMulti = parseInt(e.target.value)/100);
+
+        function resetGame() {
+            score = 0; scoreEl.innerText = score;
+            flyingBalls = []; enemies = []; particles = [];
+            giantTooth.health = 100; giantTooth.isRotten = false;
+            updateHealthBar();
+            time = 0; 
+            showMsg("DİŞİNİ KORU!");
+        }
+
+        function showMsg(t) { msgEl.innerText = t; msgEl.style.opacity = 1; setTimeout(()=>msgEl.style.opacity=0, 2000); }
+        function updateHealthBar() {
+            let pct = (giantTooth.health / giantTooth.maxHealth) * 100;
+            if(pct < 0) pct = 0;
+            healthBarEl.style.width = pct + "%";
+            healthBarEl.style.background = pct < 30 ? "#f44336" : (pct < 60 ? "#FFC107" : "#4CAF50");
+        }
+
+        // --- SPAM MEKANİĞİ ---
+        function spawnEntity(isNight) {
+            let chance = isNight ? 0.025 : 0.01; 
+            
+            if(Math.random() < chance) {
+                let type = 'microbe';
+                let rand = Math.random();
+                
+                // %10 İhtimalle Elma (Dost), %15 Şeker (Hızlı Düşman), %75 Mikrop
+                if(rand < 0.10) type = 'food_good';
+                else if(rand < 0.25) type = 'food_bad';
+
+                let speed = 1.0;
+                let emoji = '🦠';
+                let r = 30;
+
+                if (type === 'food_good') {
+                    emoji = ['🍎', '🥦', '🥕'][Math.floor(Math.random()*3)];
+                    speed = 0.8; // Yavaşça süzülür
+                } else if (type === 'food_bad') {
+                    emoji = ['🍭', '🍬', '🍫', '🍩'][Math.floor(Math.random()*4)];
+                    speed = 2.0; // Şekerler hızlıdır!
+                } else {
+                    emoji = ['🦠','👾','🐛'][Math.floor(Math.random()*3)];
+                    speed = Math.random() * 1.5 + 0.5;
+                }
+
+                enemies.push({
+                    x: cw + 50,
+                    y: Math.random() * (canvas.height - 150) + 100,
+                    r: r,
+                    vx: -speed,
+                    type: type,
+                    emoji: emoji
+                });
+            }
+        }
+
+        function update() {
+            if(giantTooth.health <= 0 && !giantTooth.isRotten) {
+                giantTooth.isRotten = true;
+                showMsg("DİŞ ÇÜRÜDÜ! 😢");
+            }
+
+            // Gökyüzü
+            time = (time+1) % dayDuration;
+            let skyProgress = time / dayDuration;
+            let isNight = skyProgress > 0.5;
+            document.body.style.background = isNight ? "#121225" : "#87CEEB";
+
+            if(!giantTooth.isRotten) spawnEntity(isNight);
+
+            // Düşmanlar / Yiyecekler
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                let e = enemies[i];
+                e.x += e.vx; 
+                e.y += Math.sin(time*0.02 + i) * 1; 
+
+                // DİŞE ÇARPTI MI?
+                if(e.x < giantTooth.w - 20) { 
+                    if(!giantTooth.isRotten) {
+                        if (e.type === 'food_good') {
+                            giantTooth.health = Math.min(giantTooth.health + 15, 100);
+                            createExplosion(e.x, e.y, "#4CAF50", 15); // Yeşil iyileşme
+                            showMsg("ŞİFA OLDU! ❤️");
+                        } else if (e.type === 'food_bad') {
+                            giantTooth.health -= 20; // Şeker çok vurur
+                            createExplosion(e.x, e.y, "#8D6E63", 15);
+                            showMsg("ŞEKER ÇÜRÜTTÜ!");
+                        } else {
+                            giantTooth.health -= 10;
+                            createExplosion(e.x, e.y, "#8D6E63", 10);
+                        }
+                        updateHealthBar();
+                        enemies.splice(i, 1);
+                        continue;
+                    }
+                }
+                
+                if(e.x < -50) enemies.splice(i, 1);
+            }
+
+            // Mermiler
+            for (let i = flyingBalls.length - 1; i >= 0; i--) {
+                let b = flyingBalls[i];
+                b.vy += gravityVal; b.x += b.vx; b.y += b.vy;
+
+                if(b.y > canvas.height-b.r) { b.y=canvas.height-b.r; b.vy *= -friction; b.vx *= friction; }
+                if(b.x > cw || b.x < 0) { b.vx *= -friction; }
+
+                // Vurma Kontrolü
+                for(let j=enemies.length-1; j>=0; j--) {
+                    let e = enemies[j];
+                    if(Math.hypot(b.x - e.x, b.y - e.y) < b.r + e.r) {
+                        
+                        if (e.type === 'food_good') {
+                            // Eyvah! Dostu vurduk.
+                            score -= 5;
+                            createExplosion(e.x, e.y, "#F44336", 5); 
+                            showMsg("ELMAYI VURMA! 😱");
+                        } else {
+                            // Düşmanı vurduk
+                            score += (e.type === 'food_bad' ? 20 : 10); // Şeker vurmak daha çok puan
+                            createExplosion(e.x, e.y, "#66BB6A", 12);
+                        }
+                        
+                        scoreEl.innerText = score;
+                        enemies.splice(j, 1);
+                        flyingBalls.splice(i, 1);
+                        break;
+                    }
+                }
+                if(b && (b.x > cw+100 || Math.abs(b.vx)+Math.abs(b.vy) < 0.2)) flyingBalls.splice(i, 1);
+            }
+
+            particles.forEach((p,i) => { p.x+=p.vx; p.y+=p.vy; p.life-=0.03; if(p.life<=0) particles.splice(i,1); });
+        }
+
+        function createExplosion(x,y,c,n) {
+            for(let i=0; i<n; i++) particles.push({x,y,vx:(Math.random()-0.5)*10,vy:(Math.random()-0.5)*10,life:1,color:c});
+        }
+
+        function draw() {
+            ctx.clearRect(0,0,cw,canvas.height);
+
+            // GÖKYÜZÜ
+            let skyP = time/dayDuration;
+            let orbX = (skyP * cw) % cw;
+            let orbY = canvas.height - Math.sin(skyP*Math.PI) * (canvas.height*0.8);
+            ctx.font = "60px serif"; ctx.textAlign="center";
+            ctx.fillText(skyP < 0.5 ? "☀️" : "🌙", orbX, orbY);
+
+            // DEV DİŞ
+            let hRatio = giantTooth.health / giantTooth.maxHealth;
+            if(hRatio < 0) hRatio = 0;
+            let r = 255; 
+            let g = Math.floor(255 * (0.5 + 0.5 * hRatio)); 
+            let b = Math.floor(255 * hRatio); 
+            
+            ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+            let tx = 20, ty = canvas.height/2 - giantTooth.h/2;
+            let tw = giantTooth.w, th = giantTooth.h;
+
+            ctx.beginPath();
+            ctx.moveTo(tx, ty);
+            ctx.quadraticCurveTo(tx + tw/3, ty - 20, tx + tw/2, ty + 10);
+            ctx.quadraticCurveTo(tx + 2*tw/3, ty - 20, tx + tw, ty);
+            ctx.lineTo(tx + tw, ty + th - 50);
+            ctx.quadraticCurveTo(tx + tw, ty + th, tx + tw/2, ty + th - 40);
+            ctx.quadraticCurveTo(tx, ty + th, tx, ty + th - 50);
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = "#CCC"; ctx.lineWidth = 4; ctx.stroke();
+
+            // Diş İfadeleri
+            let face = "😁";
+            if(giantTooth.health < 80) {
+                ctx.fillStyle = "rgba(62, 39, 35, 0.6)"; ctx.beginPath(); ctx.arc(tx+40, ty+60, 15, 0, Math.PI*2); ctx.fill();
+                face = "🙂";
+            }
+            if(giantTooth.health < 50) {
+                ctx.beginPath(); ctx.arc(tx+70, ty+150, 25, 0, Math.PI*2); ctx.fill();
+                face = "😟";
+            }
+            if(giantTooth.health < 20) {
+                ctx.beginPath(); ctx.arc(tx+50, ty+th-80, 30, 0, Math.PI*2); ctx.fill();
+                face = "😭";
+            }
+            ctx.font = "40px serif"; ctx.fillStyle = "black"; ctx.fillText(face, tx + tw/2, ty + th/2);
+
+            // FIRÇA
+            ctx.save();
+            ctx.translate(catapultBaseX, slingY + 40);
+            ctx.fillStyle = "#FF7043"; ctx.fillRect(-10, 0, 20, 100);
+            ctx.fillStyle = "#EEE"; ctx.beginPath(); ctx.roundRect(-15, -20, 30, 25, 5); ctx.fill();
+            ctx.fillStyle = "#2196F3"; ctx.fillRect(-12, -25, 4, 10); ctx.fillRect(-2, -25, 4, 10); ctx.fillRect(8, -25, 4, 10);
+            ctx.restore();
+
+            if(slingBall.isDragging) {
+                ctx.strokeStyle = "#FFF"; ctx.lineWidth=3;
+                ctx.beginPath(); ctx.moveTo(catapultBaseX-10,slingY-5); ctx.lineTo(slingBall.x,slingBall.y); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(catapultBaseX+10,slingY-5); ctx.lineTo(slingBall.x,slingBall.y); ctx.stroke();
+            }
+
+            // Düşmanlar ve Toplar
+            enemies.forEach(e => { ctx.font = e.r*2+"px serif"; ctx.fillText(e.emoji, e.x, e.y); });
+            flyingBalls.forEach(b => { ctx.font = b.r*2+"px serif"; ctx.fillText(b.emoji, b.x, b.y); });
+            
+            ctx.font = ballRadius*2+"px serif"; ctx.fillText("🫧", slingBall.x, slingBall.y);
+
+            particles.forEach(p=>{ctx.fillStyle=p.color;ctx.globalAlpha=p.life;ctx.beginPath();ctx.arc(p.x,p.y,5,0,Math.PI*2);ctx.fill();});
+            ctx.globalAlpha=1;
+        }
+
+        resize();
+        function loop() { update(); draw(); requestAnimationFrame(loop); }
+        loop();
+
+    </script>
+</body>
+</html>
